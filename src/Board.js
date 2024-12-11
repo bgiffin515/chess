@@ -1,37 +1,55 @@
 import React, { useEffect, useState } from 'react';
+import { io } from 'socket.io-client'; // Import Socket.IO client
 import './Board.css';
 
+const socket = io('https://chess-server-p5zd.onrender.com'); // Replace with your deployed server URL if hosting remotely
+
 const pieces = {
-    'r': '\u265C', // Black Rook
-    'n': '\u265E', // Black Knight
-    'b': '\u265D', // Black Bishop
-    'q': '\u265B', // Black Queen
-    'k': '\u265A', // Black King
-    'p': '\u265F', // Black Pawn
-    'R': '\u2656', // White Rook
-    'N': '\u2658', // White Knight
-    'B': '\u2657', // White Bishop
-    'Q': '\u2655', // White Queen
-    'K': '\u2654', // White King
-    'P': '\u2659'  // White Pawn
+    'r': '\u265C', 'n': '\u265E', 'b': '\u265D', 'q': '\u265B', 'k': '\u265A', 'p': '\u265F',
+    'R': '\u2656', 'N': '\u2658', 'B': '\u2657', 'Q': '\u2655', 'K': '\u2654', 'P': '\u2659'
 };
 
-const initialBoard = [
-    ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'],
-    ['p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'],
-    [null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null],
-    ['P', 'P', 'P', 'P', 'P', 'P', 'P', 'P'],
-    ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R']
-];
-
 function Board() {
-    const [boardState, setBoardState] = useState(initialBoard);
+    const [boardState, setBoardState] = useState([]);
     const [selectedPiece, setSelectedPiece] = useState(null);
     const [turn, setTurn] = useState('white');
     const [customMessage, setCustomMessage] = useState(null);
+
+    useEffect(() => {
+        console.log('Requesting initial game state...');
+        socket.emit('requestGameState');
+
+        // Listen for game state updates from the server
+        socket.on('gameState', (gameState) => {
+            console.log('Received game state:', gameState);
+            setBoardState(gameState.board);
+            setTurn(gameState.turn);
+        });
+
+        // Fallback to initial board state if no response is received within 3 seconds
+        const timeout = setTimeout(() => {
+            if (boardState.length === 0) {
+                console.log('No response from server. Using initial board state.');
+                setBoardState([
+                    ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'],
+                    ['p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'],
+                    [null, null, null, null, null, null, null, null],
+                    [null, null, null, null, null, null, null, null],
+                    [null, null, null, null, null, null, null, null],
+                    [null, null, null, null, null, null, null, null],
+                    ['P', 'P', 'P', 'P', 'P', 'P', 'P', 'P'],
+                    ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R']
+                ]);
+                setTurn('white');
+            }
+        }, 3000);
+
+        // Cleanup listeners and timeout on unmount
+        return () => {
+            socket.off('gameState');
+            clearTimeout(timeout);
+        };
+    }, []);
 
     const handleSquareClick = (row, col) => {
         const clickedPiece = boardState[row][col];
@@ -58,13 +76,22 @@ function Board() {
             newBoard[targetRow][targetCol] = piece;
             newBoard[row][col] = null;
 
-            setBoardState(newBoard);
+            console.log('Emitting move:', {
+                board: newBoard,
+                turn: turn === 'white' ? 'black' : 'white'
+            });
+
+            // Emit the new state to the server
+            socket.emit('move', {
+                board: newBoard,
+                turn: turn === 'white' ? 'black' : 'white'
+            });
+
             setSelectedPiece(null);
-            setTurn(turn === 'white' ? 'black' : 'white');
-            setCustomMessage(null); // Clear any custom messages
+            setCustomMessage(null);
         } else {
             setCustomMessage('Invalid move! Try again.');
-            setTimeout(() => setCustomMessage(null), 3000); // Clear message after 3 seconds
+            setTimeout(() => setCustomMessage(null), 3000);
         }
     };
 
@@ -74,23 +101,16 @@ function Board() {
             ((piece === piece.toUpperCase() && targetPiece === targetPiece.toUpperCase()) ||
             (piece === piece.toLowerCase() && targetPiece === targetPiece.toLowerCase()));
 
-        if (isSameTeam) return false; // Cannot capture your own pieces
+        if (isSameTeam) return false;
 
         switch (piece.toLowerCase()) {
-            case 'p': // Pawn
-                return validatePawnMove(startRow, startCol, endRow, endCol, piece);
-            case 'r': // Rook
-                return validateRookMove(startRow, startCol, endRow, endCol);
-            case 'n': // Knight
-                return validateKnightMove(startRow, startCol, endRow, endCol);
-            case 'b': // Bishop
-                return validateBishopMove(startRow, startCol, endRow, endCol);
-            case 'q': // Queen
-                return validateQueenMove(startRow, startCol, endRow, endCol);
-            case 'k': // King
-                return validateKingMove(startRow, startCol, endRow, endCol);
-            default:
-                return false;
+            case 'p': return validatePawnMove(startRow, startCol, endRow, endCol, piece);
+            case 'r': return validateRookMove(startRow, startCol, endRow, endCol);
+            case 'n': return validateKnightMove(startRow, startCol, endRow, endCol);
+            case 'b': return validateBishopMove(startRow, startCol, endRow, endCol);
+            case 'q': return validateQueenMove(startRow, startCol, endRow, endCol);
+            case 'k': return validateKingMove(startRow, startCol, endRow, endCol);
+            default: return false;
         }
     };
 
@@ -99,24 +119,17 @@ function Board() {
         const startRowForPawn = piece === 'P' ? 6 : 1;
 
         if (endCol === startCol) {
-            // Moving forward
-            if (endRow === startRow + direction && !boardState[endRow][endCol]) {
-                return true;
-            }
-            // Double step from starting position
-            if (startRow === startRowForPawn && endRow === startRow + 2 * direction && 
-                !boardState[startRow + direction][endCol] && !boardState[endRow][endCol]) {
-                return true;
-            }
+            if (endRow === startRow + direction && !boardState[endRow][endCol]) return true;
+            if (startRow === startRowForPawn && endRow === startRow + 2 * direction &&
+                !boardState[startRow + direction][endCol] && !boardState[endRow][endCol]) return true;
         } else if (Math.abs(endCol - startCol) === 1 && endRow === startRow + direction) {
-            // Capturing diagonally
             if (boardState[endRow][endCol]) return true;
         }
         return false;
     };
 
     const validateRookMove = (startRow, startCol, endRow, endCol) => {
-        if (startRow !== endRow && startCol !== endCol) return false; // Must move in a straight line
+        if (startRow !== endRow && startCol !== endCol) return false;
 
         const rowDirection = endRow > startRow ? 1 : endRow < startRow ? -1 : 0;
         const colDirection = endCol > startCol ? 1 : endCol < startCol ? -1 : 0;
@@ -125,7 +138,7 @@ function Board() {
         let currentCol = startCol + colDirection;
 
         while (currentRow !== endRow || currentCol !== endCol) {
-            if (boardState[currentRow][currentCol]) return false; // Path is blocked
+            if (boardState[currentRow][currentCol]) return false;
             currentRow += rowDirection;
             currentCol += colDirection;
         }
@@ -135,12 +148,11 @@ function Board() {
     const validateKnightMove = (startRow, startCol, endRow, endCol) => {
         const rowDiff = Math.abs(startRow - endRow);
         const colDiff = Math.abs(startCol - endCol);
-
         return (rowDiff === 2 && colDiff === 1) || (rowDiff === 1 && colDiff === 2);
     };
 
     const validateBishopMove = (startRow, startCol, endRow, endCol) => {
-        if (Math.abs(startRow - endRow) !== Math.abs(startCol - endCol)) return false; // Must move diagonally
+        if (Math.abs(startRow - endRow) !== Math.abs(startCol - endCol)) return false;
 
         const rowDirection = endRow > startRow ? 1 : -1;
         const colDirection = endCol > startCol ? 1 : -1;
@@ -149,7 +161,7 @@ function Board() {
         let currentCol = startCol + colDirection;
 
         while (currentRow !== endRow || currentCol !== endCol) {
-            if (boardState[currentRow][currentCol]) return false; // Path is blocked
+            if (boardState[currentRow][currentCol]) return false;
             currentRow += rowDirection;
             currentCol += colDirection;
         }
@@ -157,32 +169,24 @@ function Board() {
     };
 
     const validateQueenMove = (startRow, startCol, endRow, endCol) => {
-        return validateRookMove(startRow, startCol, endRow, endCol) || 
-               validateBishopMove(startRow, startCol, endRow, endCol);
+        return validateRookMove(startRow, startCol, endRow, endCol) || validateBishopMove(startRow, startCol, endRow, endCol);
     };
 
     const validateKingMove = (startRow, startCol, endRow, endCol) => {
         const rowDiff = Math.abs(startRow - endRow);
         const colDiff = Math.abs(startCol - endCol);
-        return rowDiff <= 1 && colDiff <= 1; // King moves 1 square in any direction
+        return rowDiff <= 1 && colDiff <= 1;
     };
 
     return (
-        <div className="App" style={{
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
-            height: '100vh'
-        }}>
-            <h1>AI Chess Game</h1>
+        <div className="App" style={{ textAlign: 'center' }}>
+            <h1>Multiplayer Chess</h1>
             {customMessage && <div className="custom-message" style={{ color: 'blue', marginBottom: '10px' }}>{customMessage}</div>}
             <div id="chessboard" style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(8, 60px)',
                 gridTemplateRows: 'repeat(8, 60px)',
-                border: '2px solid #333',
-                margin: '20px'
+                margin: '0 auto'
             }}>
                 {boardState.map((row, rowIndex) => (
                     row.map((cell, colIndex) => (
